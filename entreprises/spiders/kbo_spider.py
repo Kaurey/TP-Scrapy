@@ -45,52 +45,41 @@ class KboSpider(scrapy.Spider):
             )
 
     def parse(self, response):
-        # Fonction utilitaire pour nettoyer le texte
+
         def clean_text(text):
             if text:
                 return " ".join(text.replace("\n", " ").replace("\r", " ").split())
             return ""
 
-        # Fonction générique pour extraire un champ à partir du label
-        def extract_field(label):
-            try:
-                xpath_expr = f"//td[contains(text(), '{label}')]/following-sibling::td[1]//text()"
-                texts = response.xpath(xpath_expr).getall()
-                if texts:
-                    return clean_text(texts[0])  # <- on prend juste le premier résultat
-                return ""
-            except Exception as e:
-                print(f"Erreur extraction pour {label}: {e}")
-                return ""
+        generalites = {}
 
+        # Trouver le tr "Généralités"
+        tr_start = response.xpath('//tr[td/h2[contains(text(), "Généralités")]]')
+        if tr_start:
+            # Boucler sur tous les tr suivants
+            for tr in tr_start.xpath('./following-sibling::tr'):
+                # Si on atteint un autre <h2>, on stoppe
+                if tr.xpath('.//h2'):
+                    break
 
+                tds = tr.xpath('./td')
+                if len(tds) < 2:
+                    continue
+
+                key = clean_text(tds[0].xpath('string(.)').get())
+                key_normalized = key.lower().replace("’", "").replace("'", "").replace(" ", "_").replace(":", "")
+
+                value_texts = []
+                for td in tds[1:]:
+                    value_texts.extend(td.xpath('.//text()').getall())
+                value = clean_text(" ".join(value_texts))
+
+                if key_normalized:
+                    generalites[key_normalized] = value
 
         item = EntrepriseItem()
-        item["kbo"] = {
-        "generalites": {
-            "numero_officiel": extract_field("Numéro"),
-            "statut": extract_field("Statut"),
-            "situation_juridique": extract_field("Situation juridique"),
-            "date_debut": extract_field("Date de début"),
-            "denomination": extract_field("Dénomination"),
-            "adresse": extract_field("Adresse du siège"),
-            "telephone": extract_field("Numéro de téléphone"),
-            "fax": extract_field("Numéro de fax"),
-            "email": extract_field("E-mail"),
-            "site_web": extract_field("Adresse web"),
-            "type_entite": extract_field("Type d'entité"),
-            "forme_legale": extract_field("Forme légale"),
-            "nb_unites_etablissement": extract_field("Nombre d'unités d'établissement"),
-        },
-        # "fonctions": {},
-        # "capacites_entrepreneuriales": {},
-        # "qualites": {},
-        # "autorisations": {},
-        # "nace": {},
-        # "donnees_financieres": {},
-        # "liens_entre_entites": {},
-        # "liens_externes": {}
-    }
-
+        item['kbo'] = {
+            'generalites': generalites
+        }
         yield item
 
