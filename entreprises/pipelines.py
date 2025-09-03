@@ -1,13 +1,32 @@
-# Define your item pipelines here
-#
-# Don't forget to add your pipeline to the ITEM_PIPELINES setting
-# See: https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+import pymongo
+from pymongo import MongoClient
 
+class MongoDBPipeline:
+    def __init__(self, mongo_uri="mongodb://localhost:27017", mongo_db="entreprises"):
+        self.mongo_uri = mongo_uri
+        self.mongo_db = mongo_db
 
-# useful for handling different item types with a single interface
-from itemadapter import ItemAdapter
+    def open_spider(self, spider):
+        self.client = MongoClient(self.mongo_uri)
+        self.db = self.client[self.mongo_db]
+        self.collection = self.db["entreprises"]
 
+    def close_spider(self, spider):
+        # s'assurer que toutes les opérations sont finies avant de fermer
+        self.client.close()
 
-class EntreprisesPipeline:
     def process_item(self, item, spider):
+        # Prends le numero depuis generalites si présent
+        generalites = item["kbo"].get("generalites", {})
+        numero = generalites.get("numero_officiel")
+        if numero:
+            self.collection.update_one(
+                {"_id": numero},
+                {"$set": dict(item)},
+                upsert=True
+            )
+        else:
+            self.collection.insert_one(dict(item))
+
         return item
+
