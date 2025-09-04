@@ -12,31 +12,44 @@ class MongoDBPipeline:
         self.collection = self.db["entreprises"]
 
     def close_spider(self, spider):
-        # s'assurer que toutes les opérations sont finies avant de fermer
         self.client.close()
 
     def process_item(self, item, spider):
-        generalites = item["kbo"].get("generalites", {})
-
-        numero_brut = generalites.get("numero_dentreprise")
+        # Extraire le numéro propre
+        numero_brut = item.get("kbo", {}).get("generalites", {}).get("numero_dentreprise")
         numero_clean = None
-
         if numero_brut:
-            # Extraire les 10 chiffres du numéro officiel (première occurrence)
-            match = re.search(r"\d{4}\.\d{3}\.\d{3}", numero_brut)
+            match = re.search(r"(\d{4})[.]?(\d{3})[.]?(\d{3})", numero_brut)
             if match:
-                numero_clean = match.group(0).replace(".", "")
+                numero_clean = "".join(match.groups())
 
-        if numero_clean:
-            self.collection.update_one(
-                {"_id": numero_clean},
-                {"$set": dict(item)},
-                upsert=True
-            )
-        else:
+        if not numero_clean:
             spider.logger.warning(f"⚠️ Aucun numéro valide trouvé dans: {numero_brut}")
             self.collection.insert_one(dict(item))
+            return item
+
+        if spider.name == "kbo_spider":
+            # --- Item KBO : mettre à jour TOUTES les infos ---
+            update_data = item.copy()
+            publications = update_data.pop("publications", [])
+            self.collection.update_one(
+                {"_id": numero_clean},
+                {
+                    "$setOnInsert": {"_id": numero_clean},
+                    "$set": update_data,
+                    "$push": {"publications": {"$each": publications}}
+                },
+                upsert=True
+            )
+
+        elif spider.name == "ejustice":
+            # --- Item EJustice : ne jamais écraser les infos KBO, juste ajouter les publications ---
+            publications = item.get("publications", [])
+            if publications:
+                self.collection.update_one(
+                    {"_id": numero_clean},
+                    {"$push": {"publications": {"$each": publications}}},
+                    upsert=True
+                )
 
         return item
-
-

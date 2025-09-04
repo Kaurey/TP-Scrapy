@@ -4,14 +4,13 @@ import scrapy
 import pandas as pd
 from entreprises.items import EntrepriseItem
 
-
 class KboSpider(scrapy.Spider):
     name = "kbo_spider"
 
     csv_file = "entreprises.csv"
     n_entreprises = 10
 
-    async def start(self):
+    def start_requests(self):  # <-- remplacé async start
         try:
             df = pd.read_csv(self.csv_file, sep=";", dtype=str)
         except FileNotFoundError:
@@ -29,14 +28,20 @@ class KboSpider(scrapy.Spider):
 
         df["numero"] = df["numero"].str.replace(".", "", regex=False)
 
+        self.logger.info(f"Nombre d'entreprises disponibles : {len(df)}")
+
         for numero in df.sample(n=self.n_entreprises)["numero"]:
             url = f"https://kbopub.economie.fgov.be/kbopub/toonondernemingps.html?lang=fr&ondernemingsnummer={numero}"
+            self.logger.info(f"Création de la requête pour KBO {numero}")
             yield scrapy.Request(
                 url=url,
                 callback=self.parse,
                 meta={"numero": numero},
                 headers={"Accept-Language": "fr"}
             )
+
+    # parse() reste inchangé
+
 
     def parse(self, response):
         def clean_text(text):
@@ -45,7 +50,7 @@ class KboSpider(scrapy.Spider):
             return " ".join(text.replace("\n", " ").replace("\r", " ").split())
 
         def slug_key(s: str) -> str:
-            s = (s or "").strip().lower().replace("’", "'")
+            s = (s or "").strip().lower().replace("'", "'")
             s = unicodedata.normalize("NFKD", s)
             s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
             s = s.replace(":", "")
@@ -62,7 +67,7 @@ class KboSpider(scrapy.Spider):
         nace_2025 = []
         nace_2008 = []
         nace_2003 = []
-        donnees_financieres = []
+        donnees_financieres = {}
         liens_entre_entites = []
         liens_externes = []
 
@@ -170,8 +175,7 @@ class KboSpider(scrapy.Spider):
                     texte = texte.replace("TVA2003", "TVA 2003 ")
                     texte = texte.replace("ONSS2003", "ONSS 2003")
                     nace_2003.append(texte)
-
-
+                    
         nace = {
             "2025": nace_2025,
             "2008": nace_2008,
@@ -180,12 +184,9 @@ class KboSpider(scrapy.Spider):
 
         # --- Données financières ---
         h2 = response.xpath('//h2[contains(text(),"Données financières")]')
-        donnees_financieres = []
-
         if h2:
-            tr_h2 = h2.xpath('./ancestor::tr')[0]  # tr contenant le h2
+            tr_h2 = h2.xpath('./ancestor::tr')[0]
             for tr in tr_h2.xpath('./following-sibling::tr'):
-                # arrêter si on tombe sur un autre h2
                 if tr.xpath('.//h2'):
                     break
                 tds = tr.xpath('./td')
@@ -193,12 +194,7 @@ class KboSpider(scrapy.Spider):
                     key = clean_text(tds[0].xpath('string(.)').get())
                     value = clean_text(tds[1].xpath('string(.)').get())
                     if key and value:
-                        donnees_financieres.append({
-                            "key": key,
-                            "value": value
-                        })
-
-
+                        donnees_financieres[slug_key(key)] = value
 
         # --- Liens entre entités ---
         h2 = response.xpath('//h2[contains(text(),"Liens entre entités")]')
@@ -210,7 +206,6 @@ class KboSpider(scrapy.Spider):
                 texte = clean_text(" ".join(tr.xpath('.//text()').getall()))
                 if texte and texte != "&nbsp;" and "pas de données" not in texte.lower():
                     liens_entre_entites.append(texte)
-
 
         # --- Liens externes ---
         for tr in response.xpath('//h2[contains(text(),"Liens externes")]/ancestor::table//tr'):
