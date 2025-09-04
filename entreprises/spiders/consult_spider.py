@@ -1,30 +1,68 @@
 import scrapy
-import pandas as pd
-from entreprises.items import EntrepriseItem
+from pymongo import MongoClient
 
 class ConsultSpider(scrapy.Spider):
     name = "consult"
 
+    custom_settings = {
+        "USER_AGENT": "Mozilla/5.0",
+        "DOWNLOAD_DELAY": 0.5,
+        "CONCURRENT_REQUESTS": 2,
+        "ROBOTSTXT_OBEY": False,
+        "LOG_LEVEL": "INFO"
+    }
+
     def start_requests(self):
-        df = pd.read_csv("entreprises.csv")
-        for numero in df["numero"]:
-            url = f"https://consult.cbso.nbb.be/consult-enterprise/{numero}"
-            yield scrapy.Request(url, callback=self.parse, meta={"numero": numero})
+        client = MongoClient("mongodb://localhost:27017")
+        db = client["entreprises"]
+        collection = db["entreprises"]
+
+        for doc in collection.find({}, {"_id": 1}):
+            numero = doc["_id"]
+            url = (
+                f"https://consult.cbso.nbb.be/api/rs-consult/published-deposits?"
+                f"page=0&size=10&enterpriseNumber={numero}&"
+                f"sort=periodEndDate,desc&sort=depositDate,desc"
+            )
+            yield scrapy.Request(
+                url=url,
+                callback=self.parse,
+                meta={"numero": numero, "page": 0},
+                dont_filter=True
+            )
 
     def parse(self, response):
         numero = response.meta["numero"]
-        item = EntrepriseItem()
-        item["numero"] = numero
+        # page = response.meta["page"]
+        data = response.json()
 
         comptes = []
-        for row in response.css("div.deposit"):
+        for depot in data.get("content", []):
             comptes.append({
-                "titre": row.css("h3::text").get(),
-                "reference": row.css(".ref::text").get(),
-                "date_depot": row.css(".date-depot::text").get(),
-                "fin_exercice": row.css(".fin-exercice::text").get(),
-                "langue": row.css(".langue::text").get()
+                "titre": depot.get("modelName"),
+                "reference": depot.get("reference"),
+                "date_depot": depot.get("depositDate"),
+                "date_fin_exercice": depot.get("periodEndDate"),
+                "langue": depot.get("language"),
             })
 
-        item["comptes"] = comptes
-        yield item
+        yield {
+            "kbo": {"generalites": {"numero_dentreprise": numero}},
+            "comptes": comptes
+        }
+
+        # # Pagination si plusieurs pages
+        # total_pages = data.get("totalPages", 1)
+        # if page + 1 < total_pages:
+        #     next_page = page + 1
+        #     next_url = (
+        #         f"https://consult.cbso.nbb.be/api/rs-consult/published-deposits?"
+        #         f"page={next_page}&size=10&enterpriseNumber={numero}&"
+        #         f"sort=periodEndDate,desc&sort=depositDate,desc"
+        #     )
+        #     yield scrapy.Request(
+        #         url=next_url,
+        #         callback=self.parse,
+        #         meta={"numero": numero, "page": next_page},
+        #         dont_filter=True
+        #     )

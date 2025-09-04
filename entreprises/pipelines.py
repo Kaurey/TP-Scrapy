@@ -51,5 +51,16 @@ class MongoDBPipeline:
                     {"$push": {"publications": {"$each": publications}}},
                     upsert=True
                 )
+                
+        elif spider.name == "consult":
+            # --- Item Consult : ajouter comptes ---
+            comptes = item.get("comptes", [])
+            spider.logger.info(f"DEBUG comptes pour {numero_clean}: {comptes}")
+            if comptes:
+                self.collection.update_one(
+                    {"_id": numero_clean},
+                    {"$push": {"comptes": {"$each": comptes}}},
+                    upsert=True
+                )
 
         return item
