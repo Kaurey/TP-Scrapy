@@ -2,7 +2,7 @@ import re
 import scrapy
 from urllib.parse import urljoin
 from pymongo import MongoClient
-
+import math
 
 class EJusticeSpider(scrapy.Spider):
     name = "ejustice"
@@ -15,6 +15,8 @@ class EJusticeSpider(scrapy.Spider):
         "ROBOTSTXT_OBEY": False,
         "LOG_LEVEL": "INFO"
     }
+
+    ITEMS_PER_PAGE = 100  # nombre max de publications par page
 
     def start_requests(self):
         client = MongoClient("mongodb://localhost:27017")
@@ -33,13 +35,36 @@ class EJusticeSpider(scrapy.Spider):
             self.logger.info(f"Création de la requête pour KBO {numero}")
             yield scrapy.Request(
                 url=url,
-                callback=self.parse,
+                callback=self.parse_first_page,
                 meta={"numero": numero},
                 headers=headers,
                 dont_filter=True
             )
 
-    def parse(self, response):
+    def parse_first_page(self, response):
+        numero = response.meta["numero"]
+
+        # --- Extraire le nombre total de publications ---
+        total_text = response.xpath(
+            '//div[@id="block-justice-theme-breadcrumbs"]//li/span[contains(text(),"Liste")]/text()'
+        ).get(default="Liste (0)")
+        total_count = int(re.search(r'\((\d+)\)', total_text).group(1))
+        total_pages = math.ceil(total_count / self.ITEMS_PER_PAGE)
+
+        self.logger.info(f"Entreprise {numero} : {total_count} publications -> {total_pages} pages")
+
+        # --- Parcourir toutes les pages ---
+        for page in range(1, total_pages + 1):
+            page_url = f"https://www.ejustice.just.fgov.be/cgi_tsv/list.pl?language=fr&sum_date=&page={page}&btw={numero}"
+            yield scrapy.Request(
+                url=page_url,
+                callback=self.parse_page,
+                meta={"numero": numero},
+                headers=response.request.headers,
+                dont_filter=True
+            )
+
+    def parse_page(self, response):
         numero = response.meta["numero"]
         blocs = response.xpath('//div[contains(@class,"list-item--content")]')
 
@@ -60,9 +85,9 @@ class EJusticeSpider(scrapy.Spider):
             adresse = code = type_pub = date_ref = reference_pub = ""
 
             for l in lines:
-                if re.match(r"\d{3}\.\d{3}\.\d{3}", l):  # Numéro entreprise
+                if re.match(r"\d{3}\.\d{3}\.\d{3}", l):
                     code = l
-                elif re.match(r"\d{4}-\d{2}-\d{2}", l):  # Date et référence
+                elif re.match(r"\d{4}-\d{2}-\d{2}", l):
                     parts = l.split("/")
                     if len(parts) == 2:
                         date_ref, reference_pub = parts[0].strip(), parts[1].strip()
@@ -73,7 +98,6 @@ class EJusticeSpider(scrapy.Spider):
                 elif not adresse:
                     adresse = l
 
-            # --- URL image/PDF ---
             url_image = pub.xpath('.//a[@class="standard"]/@href').get(default="").strip()
             url_image = urljoin(response.url, url_image) if url_image else ""
 
@@ -87,8 +111,8 @@ class EJusticeSpider(scrapy.Spider):
                 "url_image": url_image
             })
 
-        yield {
-            "kbo": {"generalites": {"numero_dentreprise": numero}},
-            "publications": publications
-        }
-
+        if publications:
+            yield {
+                "kbo": {"generalites": {"numero_dentreprise": numero}},
+                "publications": publications
+            }

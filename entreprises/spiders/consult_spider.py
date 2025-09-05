@@ -33,7 +33,7 @@ class ConsultSpider(scrapy.Spider):
 
     def parse(self, response):
         numero = response.meta["numero"]
-        # page = response.meta["page"]
+        page = response.meta["page"]
         data = response.json()
 
         comptes = []
@@ -51,18 +51,18 @@ class ConsultSpider(scrapy.Spider):
             "comptes": comptes
         }
 
-        # # Pagination si plusieurs pages
-        # total_pages = data.get("totalPages", 1)
-        # if page + 1 < total_pages:
-        #     next_page = page + 1
-        #     next_url = (
-        #         f"https://consult.cbso.nbb.be/api/rs-consult/published-deposits?"
-        #         f"page={next_page}&size=10&enterpriseNumber={numero}&"
-        #         f"sort=periodEndDate,desc&sort=depositDate,desc"
-        #     )
-        #     yield scrapy.Request(
-        #         url=next_url,
-        #         callback=self.parse,
-        #         meta={"numero": numero, "page": next_page},
-        #         dont_filter=True
-        #     )
+        # Pagination si plusieurs pages
+        total_pages = data.get("totalPages", 1)
+        if page + 1 < total_pages:
+            next_page = page + 1
+            next_url = (
+                f"https://consult.cbso.nbb.be/api/rs-consult/published-deposits?"
+                f"page={next_page}&size=10&enterpriseNumber={numero}&"
+                f"sort=periodEndDate,desc&sort=depositDate,desc"
+            )
+            yield scrapy.Request(
+                url=next_url,
+                callback=self.parse,
+                meta={"numero": numero, "page": next_page},
+                dont_filter=True
+            )
